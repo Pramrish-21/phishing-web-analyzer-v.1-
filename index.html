@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phishing URL Analyzer</title>
+    <!-- Load Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for aesthetic enhancements */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .card {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 5px 10px -5px rgba(0, 0, 0, 0.04);
+            transition: all 0.3s ease;
+        }
+        .btn-scan {
+            background: linear-gradient(90deg, #10b981, #059669);
+            transition: background-color 0.2s ease, transform 0.1s ease;
+        }
+        .btn-scan:hover {
+            background: linear-gradient(90deg, #059669, #047857);
+            transform: translateY(-1px);
+        }
+        /* Custom animation for score background */
+        @keyframes pulse-red {
+            0%, 100% { background-color: #fca5a5; }
+            50% { background-color: #ef4444; }
+        }
+        @keyframes pulse-green {
+            0%, 100% { background-color: #bbf7d0; }
+            50% { background-color: #4ade80; }
+        }
+        .high-risk-pulse {
+            animation: pulse-red 2s infinite;
+        }
+        .low-risk-pulse {
+            animation: pulse-green 2s infinite;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 min-h-screen flex items-center justify-center">
+
+    <div class="w-full max-w-4xl">
+        <!-- Main Application Card -->
+        <div class="card bg-white p-6 md:p-10 rounded-2xl border border-gray-100">
+            <h1 class="text-3xl font-extrabold text-gray-900 mb-2 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-3 text-emerald-500"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>
+                Phishing URL Analyzer
+            </h1>
+            <p class="text-gray-500 mb-8">
+                Analyze URLs for common technical indicators used in phishing attacks. For educational purposes only.
+            </p>
+
+            <!-- URL Input Section -->
+            <div class="flex flex-col sm:flex-row gap-4 mb-8">
+                <input type="url" id="urlInput" placeholder="Enter full URL (e.g., https://secure-login.example.com/check) or just 'google.com'" 
+                       class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-emerald-500 focus:border-emerald-500 text-gray-700 outline-none transition duration-150"
+                       onkeydown="if(event.key === 'Enter') handleScan()">
+                
+                <button id="scanButton" onclick="handleScan()" 
+                        class="btn-scan text-white font-semibold py-3 px-6 rounded-lg whitespace-nowrap">
+                    Scan URL
+                </button>
+            </div>
+
+            <!-- Results Section -->
+            <div id="resultsContainer" class="hidden">
+                <h2 class="text-xl font-bold mb-4 border-b pb-2 text-gray-700">Scan Results</h2>
+
+                <!-- Summary Bar -->
+                <div class="bg-white p-4 rounded-xl border border-gray-200 mb-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                    <div class="flex-grow">
+                        <p class="text-sm font-medium text-gray-500">Analyzed URL</p>
+                        <p id="analyzedUrl" class="font-mono text-sm text-gray-800 break-all"></p>
+                    </div>
+                    <div class="text-right flex-shrink-0">
+                        <p class="text-sm font-medium text-gray-500">Risk Score (Max 18+)</p>
+                        <div id="scoreBox" class="text-3xl font-bold mt-1 px-4 py-1 rounded-lg inline-block text-white">
+                            0
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Verdict Display -->
+                <div id="verdictDisplay" class="p-4 rounded-xl mb-6">
+                    <p class="font-bold text-lg" id="verdictText"></p>
+                    <p class="text-sm" id="verdictDescription"></p>
+                </div>
+
+                <!-- Indicators List -->
+                <div id="indicatorsSection" class="mt-8">
+                    <h3 class="text-base font-semibold mb-3 text-gray-700">Indicators Found:</h3>
+                    <ul id="indicatorsList" class="space-y-3">
+                        <!-- Indicators will be inserted here -->
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Loading Indicator -->
+            <div id="loadingIndicator" class="hidden text-center py-8">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-500 mx-auto mb-3"></div>
+                <p class="text-emerald-600">Analyzing security indicators...</p>
+            </div>
+
+            <!-- Disclaimer -->
+            <div class="mt-8 pt-6 border-t border-gray-200">
+                <p class="text-xs text-gray-400">
+                    Disclaimer: This tool provides a heuristic analysis based on structural URL features. It does not guarantee the safety of a site and should not replace proper security software.
+                </p>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script>
+        // Define the baseline threshold for scoring. Higher scores indicate more potential risk.
+        const RISK_THRESHOLD = 3;
+        
+        /**
+         * Simple check if a hostname is a raw IP address (IPv4 or IPv6).
+         * @param {string} hostname 
+         * @returns {boolean}
+         */
+        function isIpAddress(hostname) {
+            if (!hostname) return false;
+
+            // Remove port if present
+            if (hostname.includes(':') && !hostname.includes('[')) { // IPv6 uses [] for host
+                hostname = hostname.split(':')[0];
+            }
+
+            // Check for IPv4 regex pattern
+            const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+            if (ipv4Regex.test(hostname)) {
+                return hostname.split('.').every(part => parseInt(part) >= 0 && parseInt(part) <= 255);
+            }
+
+            // Check for IPv6 (simplified check - more robust validation is complex)
+            if (hostname.includes(':') || (hostname.startsWith('[') && hostname.endsWith(']'))) {
+                try {
+                    // Attempt to create a standard URL object to test parsing if it's bracketed IPv6
+                    new URL('http://' + hostname);
+                    return true; 
+                } catch (e) {
+                    // Fallback to simpler check for non-bracketed IPv6 literal (less common as a raw host)
+                    const ipv6Regex = /^\[?([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\]?$/;
+                    return ipv6Regex.test(hostname);
+                }
+            }
+
+            return false;
+        }
+
+        /**
+         * Analyzes a URL for common technical indicators associated with phishing attempts.
+         * @param {string} url 
+         * @returns {Object}
+         */
+        function checkUrlForPhishingIndicators(url) {
+            let analysis = {
+                'url': url,
+                'risk_score': 0,
+                'verdict': 'LOW RISK',
+                'indicators': []
+            };
+
+            // Initial check for empty input
+            if (!url || url.length < 5) {
+                analysis['verdict'] = 'INVALID INPUT';
+                analysis['indicators'].push({ 'flag': 'SYNTAX_ERROR', 'description': 'Input is empty or too short. Please enter a valid URL or domain.', 'impact': 0 });
+                return analysis;
+            }
+
+            try {
+                // The URL constructor will throw an error if the URL is completely malformed
+                const parsedUrl = new URL(url);
+                const scheme = parsedUrl.protocol.slice(0, -1); // Remove trailing ':'
+                const netloc = parsedUrl.host; 
+                const path = parsedUrl.pathname;
+                const query = parsedUrl.search;
+                const hostname = parsedUrl.hostname;
+
+                // --- 3. Check for HTTPS (Security) ---
+                if (scheme !== 'https') {
+                    analysis['risk_score'] += 2;
+                    analysis['indicators'].push({
+                        'flag': 'NO_HTTPS',
+                        'description': `Uses insecure "${scheme}" scheme instead of HTTPS.`,
+                        'impact': 2
+                    });
+                }
+
+                // --- 4. Check for IP Address in Hostname ---
+                if (isIpAddress(hostname)) {
+                    analysis['risk_score'] += 3;
+                    analysis['indicators'].push({
+                        'flag': 'IP_ADDRESS_HOST',
+                        'description': `The hostname is a raw IP address (${hostname}), common in temporary phishing links.`,
+                        'impact': 3
+                    });
+                }
+                
+                // --- 5. Check for Excessive Subdomains (Heuristic) ---
+                // We split by '.', filter out empty strings and common prefixes (like 'www', 'm'), and count.
+                const domainParts = hostname.split('.');
+                const effectiveParts = domainParts.filter(p => p && p.toLowerCase() !== 'www' && p.toLowerCase() !== 'm');
+                
+                // We check if the effective number of parts is greater than 3 (e.g., login.staging.apple.com)
+                if (effectiveParts.length > 3) { 
+                    analysis['risk_score'] += 2;
+                    analysis['indicators'].push({
+                        'flag': 'EXCESSIVE_SUBDOMAINS',
+                        'description': `Too many effective domain parts (${effectiveParts.length}). Hostname complexity is a common obfuscation tactic.`,
+                        'impact': 2
+                    });
+                }
+                
+                // --- 6. Check for Misleading Characters (e.g., @ symbol) ---
+                // We check the original netloc/host representation before it was normalized by URL constructor.
+                if (url.includes('@') && !parsedUrl.username) {
+                     // Check if the '@' is present outside of the username:password@ part (which is usually stripped out)
+                     // If parsedUrl.username is empty, but @ is in the original URL, it was used to separate host from path.
+                     analysis['risk_score'] += 4;
+                     analysis['indicators'].push({
+                         'flag': 'MISLEADING_AT_SYMBOL',
+                         'description': 'The "@" symbol is present, which is used to mask the true domain name (the host after the @ is the real one).',
+                         'impact': 4
+                     });
+                }
+                
+                // --- 7. Check for Long Path or Query (Obfuscation) ---
+                if (path.length > 70 || query.length > 70) {
+                    analysis['risk_score'] += 1;
+                    analysis['indicators'].push({
+                        'flag': 'LONG_PATH_OR_QUERY',
+                        'description': 'The URL path or query string is unusually long (>70 chars), potentially used for obfuscation.',
+                        'impact': 1
+                    });
+                }
+                
+                // --- 8. Check for common phishing keywords in the hostname ---
+                const suspiciousKeywords = ['login-', '-secure', 'paypal-verify', 'amazon-support', 'microsoft-live', 'webmail-update'];
+                if (suspiciousKeywords.some(keyword => hostname.includes(keyword))) {
+                     analysis['risk_score'] += 3;
+                     analysis['indicators'].push({
+                        'flag': 'SUSPICIOUS_KEYWORDS',
+                        'description': 'The hostname contains high-risk keywords (e.g., "login-", "paypal-verify") often used in fake domains.',
+                        'impact': 3
+                    });
+                }
+
+            } catch (e) {
+                console.error("URL Parsing Error:", e);
+                analysis['verdict'] = 'ERROR';
+                analysis['indicators'].push({'flag': 'PROCESSING_ERROR', 'description': `Could not parse URL '${url}'. Ensure it has a valid domain structure.`, 'impact': 0});
+                return analysis;
+            }
+
+
+            // --- 9. Final Verdict ---
+            if (analysis['risk_score'] >= RISK_THRESHOLD) {
+                analysis['verdict'] = 'HIGH RISK (Potential Phishing Indicators Found)';
+            }
+            
+            return analysis;
+        }
+
+        /**
+         * Main function to handle the button click and display logic.
+         */
+        async function handleScan() {
+            const urlInput = document.getElementById('urlInput');
+            let url = urlInput.value.trim();
+            const resultsContainer = document.getElementById('resultsContainer');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+
+            // --- Robust Input Preprocessing: Prepend HTTPS if scheme is missing ---
+            if (url && !url.startsWith('http://') && !url.startsWith('https://')) {
+                // Also check for leading protocol-relative URL '//'
+                if (!url.startsWith('//')) {
+                    url = 'https://' + url;
+                } else {
+                    url = 'https:' + url;
+                }
+            }
+
+            // Show loading, hide results
+            resultsContainer.classList.add('hidden');
+            loadingIndicator.classList.remove('hidden');
+
+            // Simulate a brief network delay for better UX (optional)
+            await new Promise(resolve => setTimeout(resolve, 300)); 
+
+            const results = checkUrlForPhishingIndicators(url);
+            
+            // Hide loading, show results
+            loadingIndicator.classList.add('hidden');
+            resultsContainer.classList.remove('hidden');
+
+            displayResults(results);
+        }
+
+        /**
+         * Updates the DOM with the analysis results.
+         * @param {Object} results 
+         */
+        function displayResults(results) {
+            const scoreBox = document.getElementById('scoreBox');
+            const verdictDisplay = document.getElementById('verdictDisplay');
+            const verdictText = document.getElementById('verdictText');
+            const verdictDescription = document.getElementById('verdictDescription');
+            const analyzedUrl = document.getElementById('analyzedUrl');
+            const indicatorsList = document.getElementById('indicatorsList');
+
+            // Clear previous states
+            scoreBox.className = 'text-3xl font-bold mt-1 px-4 py-1 rounded-lg inline-block text-white';
+            verdictDisplay.className = 'p-4 rounded-xl mb-6';
+            indicatorsList.innerHTML = '';
+
+            analyzedUrl.textContent = results.url;
+            scoreBox.textContent = results.risk_score;
+
+            // Set colors and text based on verdict
+            if (results.verdict.startsWith('HIGH RISK')) {
+                scoreBox.classList.add('bg-red-500', 'high-risk-pulse');
+                verdictDisplay.classList.add('bg-red-50', 'border-l-4', 'border-red-500');
+                verdictText.textContent = '🚨 HIGH RISK Detected';
+                verdictText.classList.add('text-red-700');
+                verdictDescription.textContent = `The combined risk score of ${results.risk_score} exceeds the threshold of ${RISK_THRESHOLD}. Proceed with extreme caution.`;
+            } else if (results.verdict.startsWith('LOW RISK')) {
+                scoreBox.classList.add('bg-emerald-500', 'low-risk-pulse');
+                verdictDisplay.classList.add('bg-emerald-50', 'border-l-4', 'border-emerald-500');
+                verdictText.textContent = '✅ LOW RISK (Structural)';
+                verdictText.classList.add('text-emerald-700');
+                verdictDescription.textContent = 'No major technical phishing indicators were found in the URL structure.';
+            } else { // ERROR or INVALID INPUT
+                scoreBox.classList.add('bg-yellow-500');
+                verdictDisplay.classList.add('bg-yellow-50', 'border-l-4', 'border-yellow-500');
+                verdictText.textContent = `⚠️ ${results.verdict}`;
+                verdictText.classList.add('text-yellow-700');
+                verdictDescription.textContent = results.indicators[0] ? results.indicators[0].description : 'Could not process the input.';
+            }
+
+            // Populate indicators list
+            if (results.indicators.length > 0) {
+                results.indicators.forEach(indicator => {
+                    // Only display indicators that have an impact greater than 0, unless it's a critical error
+                    if (indicator.impact > 0 || results.verdict.startsWith('ERROR') || results.verdict.startsWith('INVALID')) {
+                        const listItem = document.createElement('li');
+                        listItem.className = 'flex items-start p-3 bg-gray-50 rounded-lg shadow-sm border border-gray-200';
+                        listItem.innerHTML = `
+                            <span class="flex-shrink-0 ${indicator.impact > 0 ? 'text-red-500' : 'text-yellow-500'} mr-3 mt-1">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                            </span>
+                            <div class="flex-grow">
+                                <p class="font-medium text-gray-800">${indicator.flag} <span class="text-sm font-normal text-red-500">(Score: +${indicator.impact})</span></p>
+                                <p class="text-sm text-gray-500">${indicator.description}</p>
+                            </div>
+                        `;
+                        indicatorsList.appendChild(listItem);
+                    }
+                });
+            } else {
+                indicatorsList.innerHTML = '<li class="text-gray-500 italic p-3">No specific technical indicators found.</li>';
+            }
+        }
+    </script>
+</body>
+</html>
